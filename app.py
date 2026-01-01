@@ -90,6 +90,62 @@ if not df.empty:
     df["Reglementaire"] = df["Rentabilite_%"].apply(lambda x: "Faible" if x >= 8 else ("Modéré" if x >= 3 else "Élevé"))
     df["RSE"] = df["Note_Sante"].apply(lambda x: "Faible" if x >= 15 else ("Modéré" if x >= 10 else "Élevé"))
 
+
+#générer PDF
+def generer_pdf_entreprise(df_entreprise):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1*cm, bottomMargin=1*cm)
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(name='TitleRed', fontSize=18, textColor=colors.red, alignment=1))
+    elements = []
+
+    # Titre
+    elements.append(Paragraph(f"Fiche Conformité Fournisseur<br/>{df_entreprise['Raison_Sociale'].iloc[0]}", styles['TitleRed']))
+    elements.append(Spacer(1, 0.5*cm))
+    elements.append(Paragraph(f"SIRET : {df_entreprise['SIRET'].iloc[0]}", styles['Title']))
+    elements.append(Spacer(1, 1*cm))
+
+    # Tableau des exercices
+    data = [["Année", "CA (€)", "Résultat Net (€)", "Note Santé /20", "Sanctions", "Finances", "RSE"]]
+    for _, row in df_entreprise.iterrows():
+        data.append([
+            str(row["Annee"]),
+            f"{row['Chiffre_Affaires']:,.0f}",
+            f"{row['Resultat_Net']:,.0f}",
+            f"{row['Note_Sante']}",
+            row["Sanctions"],
+            row["Finances"],
+            row["RSE"],
+        ])
+
+    table = Table(data)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.grey),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('GRID', (0,0), (-1,-1), 1, colors.black),
+        ('BACKGROUND', (0,1), (-1,-1), colors.beige),
+    ]))
+    elements.append(table)
+    elements.append(Spacer(1, 1*cm))
+
+    # Graphiques (on sauvegarde en image temporairement)
+    categories = ["Sanctions", "Documents", "Finances", "Reglementaire", "RSE"]
+    for cat in categories:
+        fig = px.pie(df_entreprise, names=cat, title=f"{cat}", color=cat,
+                     color_discrete_map={"Faible": "#28a745", "Modéré": "#ffc107", "Élevé": "#dc3545"},
+                     hole=0.5)
+        img_bytes = fig.to_image(format="png", width=400, height=300)
+        img_buffer = BytesIO(img_bytes)
+        elements.append(Paragraph(cat, styles['Heading2']))
+        elements.append(RLImage(img_buffer, width=8*cm, height=6*cm))
+        elements.append(Spacer(1, 0.5*cm))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+
 # Sidebar : Gestion des liasses
 with st.sidebar:
     st.header("🛠 Gestion des Liasses Fiscales")
