@@ -225,51 +225,70 @@ with st.sidebar:
 st.header("📊 Accueil")
 
 if df.empty:
-    st.info("Aucune liasse fiscale pour l'instant. Ajoutez-en via le menu latéral !")
+    st.info("Aucune donnée. Ajoutez des liasses via le menu.")
 else:
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Fournisseurs uniques", df["Raison_Sociale"].nunique())
-    col2.metric("Liasses totales", len(df))
-    col3.metric("Années couvertes", df["Annee"].nunique())
-    col4.metric("Note moyenne /20", f"{df['Note_Sante'].mean():.1f}")
+    col1.metric("Fournisseurs", df["Raison_Sociale"].nunique())
+    col2.metric("Liasses", len(df))
+    col3.metric("Années", df["Annee"].nunique())
+    col4.metric("Note moyenne", f"{df['Note_Sante'].mean():.1f}/20")
 
-    # Graphiques en anneau
+    # Donuts globaux
     categories = ["Sanctions", "Documents", "Finances", "Reglementaire", "RSE"]
     cols = st.columns(5)
-    colors = {"Faible": "#28a745", "Modéré": "#ffc107", "Élevé": "#dc3545"}
-
     for i, cat in enumerate(categories):
         with cols[i]:
             counts = df[cat].value_counts()
-            fig = go.Figure(data=[go.Pie(
-                labels=counts.index, values=counts.values, hole=0.6,
-                marker_colors=[colors.get(l, "#666") for l in counts.index],
-                textinfo='percent+label'
-            )])
-            fig.update_layout(title=cat, height=300, margin=dict(t=40, b=20))
+            fig = go.Figure(go.Pie(labels=counts.index, values=counts.values, hole=0.6,
+                                   marker_colors=["#28a745", "#ffc107", "#dc3545"]))
+            fig.update_layout(title=cat, height=300, margin=dict(t=40))
             st.plotly_chart(fig, use_container_width=True)
 
-    # Tableau portefeuille
+    # Tableau cliquable
     st.subheader("📋 Portefeuille Fournisseurs")
-    
-    # Filtres
-    entreprises = st.multiselect("Filtrer par fournisseur", options=sorted(df["Raison_Sociale"].unique()))
-    annees = st.multiselect("Filtrer par année", options=sorted(df["Annee"].unique()))
 
-    df_display = df.copy()
-    if entreprises:
-        df_display = df_display[df_display["Raison_Sociale"].isin(entreprises)]
-    if annees:
-        df_display = df_display[df_display["Annee"].isin(annees)]
+    # Agrégation par entreprise (moyenne des notes, etc.)
+    df_group = df.groupby("Raison_Sociale").agg({
+        "SIRET": "first",
+        "Note_Sante": "mean",
+        "Sanctions": lambda x: x.mode()[0] if not x.empty else "N/A",
+        "Documents": lambda x: x.mode()[0] if not x.empty else "N/A",
+        "Finances": lambda x: x.mode()[0] if not x.empty else "N/A",
+        "Reglementaire": lambda x: x.mode()[0] if not x.empty else "N/A",
+        "RSE": lambda x: x.mode()[0] if not x.empty else "N/A",
+    }).round(1).reset_index()
 
-    display_cols = ["Raison_Sociale", "SIRET", "Annee", "Sanctions", "Documents", "Finances", "Reglementaire", "RSE", "Note_Sante"]
-    df_show = df_display[display_cols]
+    # Colonne cliquable
+    df_group["Détail →"] = "👆 Cliquez pour voir la fiche détaillée"
+    st.dataframe(df_group.style.applymap(lambda x: f"background-color: {'#d4edda' if x=='Faible' else '#fff3cd' if x=='Modéré' else '#f8d7da'}",
+                                         subset=["Sanctions","Documents","Finances","Reglementaire","RSE"]),
+                 use_container_width=True, on_select="rerun", selection_mode="single-row")
 
-    def color_cell(val):
-        color_map = {"Faible": "#d4edda", "Modéré": "#fff3cd", "Élevé": "#f8d7da"}
-        return f"background-color: {color_map.get(val, '')}; padding: 8px; text-align: center"
+    # Si une ligne est sélectionnée
+    if st.session_state.get("dataframe_selection"):
+        selection = st.session_state.dataframe_selection["rows"]
+        if selection:
+            selected_row = df_group.iloc[selection[0]]
+            raison = selected_row["Raison_Sociale"]
+            df_entreprise = df[df["Raison_Sociale"] == raison].sort_values("Annee", ascending=False)
 
-    styled = df_show.style.applymap(color_cell, subset=["Sanctions","Documents","Finances","Reglementaire","RSE"])
-    st.dataframe(styled, use_container_width=True)
+            st.subheader(f"📄 Fiche détaillée : {raison}")
 
-st.caption("Application de gestion de conformité fournisseurs – Données stockées en session (rafraîchissement du navigateur les conserve)")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Note moyenne /20", f"{selected_row['Note_Sante']:.1f}")
+            col2.metric("Nombre d'exercices", len(df_entreprise))
+            col3.metric("Dernière année", df_entreprise["Annee"].max())
+
+            st.dataframe(df_entreprise[["Annee", "Chiffre_Affaires", "Resultat_Net", "Note_Sante",
+                                        "Sanctions", "Documents", "Finances", "Reglementaire", "RSE"]])
+
+            # Bouton PDF
+            pdf_buffer = generer_pdf_entreprise(df_entreprise)
+            st.download_button(
+                label="📄 Télécharger le rapport PDF",
+                data=pdf_buffer,
+                file_name=f"Fiche_Conformite_{raison.replace(' ', '_')}.pdf",
+                mime="application/pdf"
+            )
+
+st.caption("Application avec export PDF individuel par fournisseur – Créée par Grok ❤️")
